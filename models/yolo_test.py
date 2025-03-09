@@ -13,8 +13,6 @@ from utils.autoanchor import check_anchor_order
 from utils.general import make_divisible, check_file, set_logging
 from utils.torch_utils import time_synchronized, fuse_conv_and_bn, model_info, scale_img, initialize_weights, \
     select_device, copy_attr
-from models.innovation import *
-from models.CAT import *
 try:
     import thop  # for FLOPS computation
 except ImportError:
@@ -400,7 +398,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
 
         n = max(round(n * gd), 1) if n > 1 else n  # depth gain
         if m in [Conv, GhostConv, Bottleneck, GhostBottleneck, SPP, DWConv, MixConv2d, Focus, CrossConv, BottleneckCSP,
-                 C3,C3_SimAM,Conv_SimAM,Conv_NonLocal]:
+                 C3,Conv_NonLocal]:
 
             if m is Focus:
                 c1, c2 = 3, args[0]
@@ -414,16 +412,10 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
                     c2 = make_divisible(c2 * gw, 8)
 
                 args = [c1, c2, *args[1:]]
-                if m in [BottleneckCSP, C3, C3TR,C3_SimAM]:
+                if m in [BottleneckCSP, C3, C3TR]:
                     args.insert(2, n)  # number of repeats
                     n = 1
 
-
-        elif m is [Conv_SimAM,Conv_CBAM]:
-            c1, c2 = ch[f], args[0]
-            if c2 != no:
-                c2 = make_divisible(c2 * gw, 8)
-            args = [c1, c2, *args[1:]]
         elif m is nn.BatchNorm2d:
             args = [ch[f]]
         elif m is Concat:
