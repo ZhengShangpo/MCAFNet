@@ -1,27 +1,3 @@
-# YOLOv5 common modules
-
-import math
-from copy import copy
-from pathlib import Path
-
-import numpy as np
-import pandas as pd
-import requests
-import torch
-import torch.nn as nn
-from PIL import Image
-from torch.cuda import amp
-import torch.nn.functional as F
-
-from utils.datasets import letterbox
-from utils.general import non_max_suppression, make_divisible, scale_coords, increment_path, xyxy2xywh, save_one_box
-from utils.plots import colors, plot_one_box
-from utils.torch_utils import time_synchronized
-
-from torch.nn import init, Sequential
-
-from torchvision.models import resnet50, resnet101
-from torchvision.models._utils import IntermediateLayerGetter
 import torch
 import torch.nn as nn
 from pathlib import Path
@@ -1184,44 +1160,6 @@ class NonLocalBlockND(nn.Module):
         return z
 
 
-class GlobalContextBlock(nn.Module):
-    def __init__(self, in_channels, scale=16):
-        super(GlobalContextBlock, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = self.in_channels // scale
-
-        self.Conv_key = nn.Conv2d(self.in_channels, 1, 1)
-        self.SoftMax = nn.Softmax(dim=1)
-
-        self.Conv_value = nn.Sequential(
-            nn.Conv2d(self.in_channels, self.out_channels, 1),
-            nn.LayerNorm([self.out_channels, 1, 1]),
-            nn.ReLU(),
-            nn.Conv2d(self.out_channels, self.in_channels, 1),
-        )
-
-    def forward(self, x):
-        b, c, h, w = x.size()
-        # key -> [b, 1, H, W] -> [b, 1, H*W] ->  [b, H*W, 1]
-        key = self.SoftMax(self.Conv_key(x).view(b, 1, -1).permute(0, 2, 1).view(b, -1, 1).contiguous())
-        query = x.view(b, c, h * w)
-        # [b, c, h*w] * [b, H*W, 1]
-        concate_QK = torch.matmul(query, key)
-        concate_QK = concate_QK.view(b, c, 1, 1).contiguous()
-        value = self.Conv_value(concate_QK)
-        out = x + value
-        return out
-
-
-class DAnet(nn.Module):
-    def __init__(self, in_channels):
-        self.decoder = DAHead(in_channels)
-
-    def forward(self, x):
-        feats = self.ResNet50(x)
-        # self.ResNet50返回的是一个字典类型的数据.
-        x = self.decoder(feats["stage4"])
-        return x
 
 
 class PositionAttention(nn.Module):
@@ -1602,40 +1540,6 @@ class SpatialAttention_3(nn.Module):
         weight3 = self.sigmoid(x3)
         return weight1,weight2,weight3
 
-class CAM_SAM(nn.Module):
-    def __init__(self, c1):
-        super().__init__()
-        self.CAM = ChannelAttention(c1)
-        self.SAM = SpatialAttention_3()
-        self.conv = nn.Conv2d(2*c1, c1, 1, 1, padding=0, bias=False)
-
-    def forward(self, x1, x2):
-        x1 = x1 * self.CAM(x1)
-        x2 = x2 * self.CAM(x2)
-        x3 = torch.cat([x1, x2], dim=1)
-        weight1,weight2,weight3 = self.SAM(x1, x2, x3)
-        x3 = self.conv(x3)
-        x =  weight1*x1+weight2*x2+weight3*x3
-        return x
-
-class MAWF(nn.Module):
-    def __init__(self, c1, index):
-        super().__init__()
-        self.index = index
-        self.CAM_SAM = CAM_SAM(c1)
-        self.feature_fusion = feature_fusion(c1)
-
-    def forward(self, x):
-        if self.index == 0:
-            x1 = x[0]
-            x2 = x[1][0]
-            x = self.CAM_SAM(x1, x2)
-            return x
-        elif self.index == 1:
-            x1 = x[0]
-            x2 = x[1][1]
-            x = self.CAM_SAM(x1, x2)
-            return x
 
 
 class NMS(nn.Module):
@@ -1990,4 +1894,39 @@ class MAWF_3D_IAFE(nn.Module):
         elif self.index == 1:
             x = self.CAM_SAM(x[0], x[1][0])
             x = self.NonLocalBlockND(x)
+            return x
+
+class CAM_SAM(nn.Module):
+    def __init__(self, c1):
+        super().__init__()
+        self.CAM = ChannelAttention(c1)
+        self.SAM = SpatialAttention_3()
+        self.conv = nn.Conv2d(2*c1, c1, 1, 1, padding=0, bias=False)
+
+    def forward(self, x1, x2):
+        x1 = x1 * self.CAM(x1)
+        x2 = x2 * self.CAM(x2)
+        x3 = torch.cat([x1, x2], dim=1)
+        weight1,weight2,weight3 = self.SAM(x1, x2, x3)
+        x3 = self.conv(x3)
+        x =  weight1*x1+weight2*x2+weight3*x3
+        return x
+
+class MAWF(nn.Module):
+    def __init__(self, c1, index):
+        super().__init__()
+        self.index = index
+        self.CAM_SAM = CAM_SAM(c1)
+        self.feature_fusion = feature_fusion(c1)
+
+    def forward(self, x):
+        if self.index == 0:
+            x1 = x[0]
+            x2 = x[1][0]
+            x = self.CAM_SAM(x1, x2)
+            return x
+        elif self.index == 1:
+            x1 = x[0]
+            x2 = x[1][1]
+            x = self.CAM_SAM(x1, x2)
             return x
